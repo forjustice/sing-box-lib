@@ -47,3 +47,8 @@ jobs:
           commit_user_name: "liujixings"
           commit_user_email: "liujixings@outlook.com"
           file_pattern: version
+
+      - name: Repository Dispatch
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          event-type: release
