@@ -95,7 +95,7 @@ jobs:
         with:
           commit_message: "Libbox Release ${{ env.latest_version }}"
           commit_user_name: "liujixings"
-          commit_user_email: "${{ secrets.email }}"
+          commit_user_email: "liujixings@outlook.com"
           tagging_message: "${{ env.latest_version }}"
           file_pattern: Package.swift
 
