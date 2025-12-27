@@ -23,7 +23,6 @@ jobs:
           if [ -f version ]; then
             tag=$(cat version)
             echo "tag=${tag}" >> $GITHUB_ENV
-            echo "latest_version=${tag#v}" >> $GITHUB_ENV
           fi
       # --- Check out sing-box source at the requested tag ---
       - uses: actions/checkout@v4
@@ -83,7 +82,7 @@ jobs:
           echo "  targets: [" >> Package.swift
           echo "    .binaryTarget(" >> Package.swift
           echo "      name: \"Libbox\"," >> Package.swift
-          echo "      url: \"https://github.com/liujixings/sing-box-lib/releases/download/${{ env.latest_version }}/Libbox.xcframework.zip\"," >> Package.swift
+          echo "      url: \"https://github.com/liujixings/sing-box-lib/releases/download/${{ env.tag }}/Libbox.xcframework.zip\"," >> Package.swift
           echo "      checksum: \"${{ env.file_checksum }}\"" >> Package.swift
           echo "    )" >> Package.swift
           echo "  ]" >> Package.swift
@@ -93,10 +92,10 @@ jobs:
       - name: Commit manifest & tag
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Libbox Release ${{ env.latest_version }}"
+          commit_message: "Libbox Release ${{ env.tag }}"
           commit_user_name: "liujixings"
           commit_user_email: "liujixings@outlook.com"
-          tagging_message: "${{ env.latest_version }}"
+          tagging_message: "${{ env.tag }}"
           file_pattern: Package.swift
 
       # --- Publish GitHub release (softprops/action-gh-release@v2) ---
@@ -104,6 +103,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          tag_name: ${{ env.latest_version }}
+          tag_name: ${{ env.tag }}
           body: "Compiled from source tag: ${{ env.tag }}"
           files: box/Libbox.xcframework.zip
