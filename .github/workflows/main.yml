@@ -1,0 +1,48 @@
+name: Update sing-box version
+
+on:
+  schedule:
+    - cron: "0 2 * * *" 
+  workflow_dispatch:
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get latest sing-box version
+        run: |
+          latest=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest \ | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "latest_version=$latest" >> $GITHUB_ENV
+
+      - name: Compare with local version
+        run: |
+          if [ -f version ]; then
+            current=$(cat version)
+          else
+            current=""
+          fi
+          if [ "$current" != "${{ env.latest_version }}" ]; then
+            echo "update_needed=true" >> $GITHUB_ENV
+          else
+            echo "update_needed=false" >> $GITHUB_ENV
+          fi
+
+      - name: Update version file
+        if: env.update_needed == 'true'
+        run: |
+          echo "${{ env.latest_version }}" > version
+  
+      - name: Commit manifest & tag
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Sing-Box Release ${{ env.latest_version }}"
+          commit_user_name: "liujixings"
+          commit_user_email: "liujixings@outlook.com"
+          file_pattern: version
