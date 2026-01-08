@@ -56,7 +56,7 @@ jobs:
       - name: Build xcframework
         run: |
           cd box
-          go run ./cmd/internal/build_libbox -target apple -platform ios,tvos,macos
+          go run ./cmd/internal/build_libbox -target apple -platform ios,iossimulator,tvos,macos
           zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
 
       # --- Generate SHA‑256 checksum for the archive ---
