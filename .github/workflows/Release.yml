@@ -9,15 +9,68 @@ on:
   #     - version
 
 jobs:
-  release:
+  # --- Job 1: Build Apple xcframework on macOS ---
+  build_apple:
     runs-on: macOS-15
-
-    # Allow the workflow to push tags/commits back to the repo
-    permissions:
-      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      checksum: ${{ steps.checksum.outputs.checksum }}
 
     steps:
-      # --- Check out main repository (actions/checkout@v4) ---
+      - uses: actions/checkout@v4
+
+      - name: Get Sing-Box version
+        id: version
+        run: |
+          if [ -f version ]; then
+            tag=$(cat version)
+            echo "tag=${tag}" >> $GITHUB_ENV
+            echo "tag=${tag}" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          repository: SagerNet/sing-box
+          path: box
+          ref: ${{ env.tag }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Setup Gomobile
+        run: |
+          cd box
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          gomobile init
+
+      - name: Build xcframework
+        run: |
+          cd box
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          go run ./cmd/internal/build_libbox -target apple -platform ios,iossimulator,tvos,tvossimulator,macos
+          zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
+
+      - name: Detect checksum
+        id: checksum
+        run: |
+          CHECKSUM=$(shasum -a 256 box/Libbox.xcframework.zip | awk '{print $1}')
+          echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+
+      - name: Upload xcframework artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Libbox.xcframework.zip
+          path: box/Libbox.xcframework.zip
+
+  # --- Job 2: Build Android aar on Ubuntu ---
+  build_android:
+    runs-on: ubuntu-latest
+
+    steps:
       - uses: actions/checkout@v4
 
       - name: Get Sing-Box version
@@ -26,71 +79,100 @@ jobs:
             tag=$(cat version)
             echo "tag=${tag}" >> $GITHUB_ENV
           fi
-      # --- Check out sing-box source at the requested tag ---
+
       - uses: actions/checkout@v4
         with:
           repository: SagerNet/sing-box
           path: box
           ref: ${{ env.tag }}
 
-      # --- Set up Go (actions/setup-go@v5) ---
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.23"
+          cache: false
 
-      # --- Set up Node (actions/setup-node@v4) ---
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
         with:
-          node-version: "20"
+          ndk-version: r28
+          local-cache: true
 
-      # --- Install gomobile toolchain ---
-      - name: Setup Gomobile
+      - name: Setup OpenJDK
+        run: |
+          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
+          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
+
+      - name: Build Android aar
         run: |
           cd box
           make lib_install
-          gomobile init
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
-      # --- Build the iOS xcframework ---
-      - name: Build xcframework
+      - name: Upload Android aar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbox.aar
+          path: box/libbox.aar
+
+  # --- Job 3: Release - depends on both builds ---
+  release:
+    runs-on: ubuntu-latest
+    needs: [build_apple, build_android]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
         run: |
-          cd box
-          go run ./cmd/internal/build_libbox -target apple -platform ios,iossimulator,tvos,tvossimulator,macos
-          zip -ry ./Libbox.xcframework.zip ./Libbox.xcframework
+          if [ -f version ]; then
+            tag=$(cat version)
+            echo "tag=${tag}" >> $GITHUB_ENV
+          fi
 
-      # --- Generate SHA‑256 checksum for the archive ---
-      - name: Detect checksum
-        id: checksum
-        shell: bash
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release files
         run: |
-          CHECKSUM=$(shasum -a 256 box/Libbox.xcframework.zip | awk '{print $1}')
-          echo "file_checksum=$CHECKSUM" >> "$GITHUB_ENV"
+          mv dist/Libbox.xcframework.zip/Libbox.xcframework.zip dist/
+          mv dist/libbox.aar/libbox.aar dist/
+          rm -rf dist/Libbox.xcframework.zip dist/libbox.aar
+          ls -la dist/
 
-      # --- Generate SwiftPM manifest that points at the new binary target ---
       - name: Update Package.swift
-        shell: bash
         run: |
-          echo "// swift-tools-version: 5.7" > Package.swift
-          echo "" >> Package.swift
-          echo "import PackageDescription" >> Package.swift
-          echo "" >> Package.swift
-          echo "let package = Package(" >> Package.swift
-          echo "  name: \"Libbox\"," >> Package.swift
-          echo "  platforms: [.iOS(.v12)]," >> Package.swift
-          echo "  products: [" >> Package.swift
-          echo "    .library(name: \"Libbox\", targets: [\"Libbox\"])," >> Package.swift
-          echo "  ]," >> Package.swift
-          echo "  targets: [" >> Package.swift
-          echo "    .binaryTarget(" >> Package.swift
-          echo "      name: \"Libbox\"," >> Package.swift
-          echo "      url: \"https://github.com/liujixings/sing-box-lib/releases/download/${{ env.tag }}/Libbox.xcframework.zip\"," >> Package.swift
-          echo "      checksum: \"${{ env.file_checksum }}\"" >> Package.swift
-          echo "    )" >> Package.swift
-          echo "  ]" >> Package.swift
-          echo ")" >> Package.swift
+          CHECKSUM="${{ needs.build_apple.outputs.checksum }}"
+          cat > Package.swift << EOF
+          // swift-tools-version: 5.7
 
-      # --- Commit the manifest and tag the commit (stefanzweifel/git-auto-commit-action@v5) ---
+          import PackageDescription
+
+          let package = Package(
+            name: "Libbox",
+            platforms: [.iOS(.v12)],
+            products: [
+              .library(name: "Libbox", targets: ["Libbox"]),
+            ],
+            targets: [
+              .binaryTarget(
+                name: "Libbox",
+                url: "https://github.com/liujixings/sing-box-lib/releases/download/${{ env.tag }}/Libbox.xcframework.zip",
+                checksum: "$CHECKSUM"
+              )
+            ]
+          )
+          EOF
+
       - name: Commit manifest & tag
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
@@ -100,11 +182,12 @@ jobs:
           tagging_message: "${{ env.tag }}"
           file_pattern: Package.swift
 
-      # --- Publish GitHub release (softprops/action-gh-release@v2) ---
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
           tag_name: ${{ env.tag }}
           body: "Compiled from source tag: ${{ env.tag }}"
-          files: box/Libbox.xcframework.zip
+          files: |
+            dist/Libbox.xcframework.zip
+            dist/libbox.aar
