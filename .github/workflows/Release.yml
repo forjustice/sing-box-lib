@@ -144,9 +144,14 @@ jobs:
 
       - name: Prepare release files
         run: |
-          mv dist/Libbox.xcframework.zip/Libbox.xcframework.zip dist/
-          mv dist/libbox.aar/libbox.aar dist/
+          # Move files to temp names first to avoid directory name conflict
+          mv dist/Libbox.xcframework.zip/Libbox.xcframework.zip dist/xcframework_temp.zip
+          mv dist/libbox.aar/libbox.aar dist/aar_temp.aar
+          # Remove the artifact directories
           rm -rf dist/Libbox.xcframework.zip dist/libbox.aar
+          # Rename to final names
+          mv dist/xcframework_temp.zip dist/Libbox.xcframework.zip
+          mv dist/aar_temp.aar dist/libbox.aar
           ls -la dist/
 
       - name: Update Package.swift
